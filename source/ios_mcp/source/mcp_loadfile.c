@@ -213,11 +213,44 @@ MCP_LoadCustomFile(LoadTargetDevice target, char *path, uint32_t filesize, uint3
 }
 
 int DoSDRedirectionByPath(ipcmessage *msg, MCPLoadFileRequest *request) {
-    if (strlen(request->name) > 1 && request->name[0] == '~' && request->name[1] == '|') {
+    DEBUG_FUNCTION_LINE("RPX/RPL name for test: %s\n", request->name);
+
+    char filepath[256]; // buffer for full SD path
+    memset(filepath, 0, sizeof(filepath));
+
+    char mountpath[] = "/vol/storage_iosu_tmp_sd_rpl_hijack";
+    snprintf(filepath, sizeof(filepath), "%s/%s", mountpath, request->name);
+
+    char modulename[256];
+    memset(modulename, 0, sizeof(modulename));
+
+    int fsa_h = svcOpen("/dev/fsa", 0);
+    int fd = -1;
+
+    FSA_Mount(fsa_h, "/dev/sdcard01", mountpath, 2, NULL, 0);
+    int ret = FSA_OpenFile(fsa_h, filepath, "r", &fd);
+
+    if (ret < 0) {
+      //  off for now due to spammy logs  
+      //  DEBUG_FUNCTION_LINE("Error: Couldn't find RPL on SD! Err code: %d", ret); 
+        FSA_CloseFile(fsa_h, fd);
+        svcClose(fsa_h);
+        // Keeping a copy of request->name here so that homebrew RPXs
+        // won't crash on boot
+        snprintf(modulename, sizeof(modulename), "%s", request->name);
+    }
+        else {
+            DEBUG_FUNCTION_LINE("Found RPL for hijack!");
+            snprintf(modulename, sizeof(modulename), "~|%s", request->name);
+            FSA_CloseFile(fsa_h, fd);
+            svcClose(fsa_h);
+        }
+
+    if (strlen(modulename) > 1 && modulename[0] == '~' && modulename[1] == '|') {
         // OSDynload_Acquire is cutting of the name right after the last '/'. This means "~/wiiu/libs/test.rpl" would simply become "test.rpl".
         // To still have directories, Mocha expects '|' instead of '/'. (Modules like the AromaBaseModule might handle this transparent for the user.)
         // Example: "~|wiiu|libs|test.rpl" would load "sd://wiiu/libs/test.rpl".
-        char *curPtr = &request->name[1];
+        char *curPtr = &modulename[1];
         while (*curPtr != '\0') {
             if (*curPtr == '|') {
                 *curPtr = '/';
@@ -225,8 +258,8 @@ int DoSDRedirectionByPath(ipcmessage *msg, MCPLoadFileRequest *request) {
             curPtr++;
         }
         // DEBUG_FUNCTION_LINE("Trying to load %s from sd\n", &request->name[2]);
-        int result = MCP_LoadCustomFile(MOCHA_LOAD_TARGET_DEVICE_SD, &request->name[2], 0, 0, msg->ioctl.buffer_io,
-                                        msg->ioctl.length_io, request->pos, EndsWith(request->name, ".rpx"));
+        int result = MCP_LoadCustomFile(MOCHA_LOAD_TARGET_DEVICE_SD, &modulename[2], 0, 0, msg->ioctl.buffer_io,
+                                        msg->ioctl.length_io, request->pos, EndsWith(modulename, ".rpx"));
 
         if (result >= 0) {
             return result;
