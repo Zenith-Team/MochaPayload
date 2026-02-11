@@ -212,15 +212,20 @@ MCP_LoadCustomFile(LoadTargetDevice target, char *path, uint32_t filesize, uint3
     return result;
 }
 
+static uint64_t curTitleID;
+
 int DoSDRedirectionByPath(ipcmessage *msg, MCPLoadFileRequest *request) {
-    DEBUG_FUNCTION_LINE("RPX/RPL name for test: %s\n", request->name);
+  // This is a short-term workaround to load RPLs imported via the .f/dimport
+  // sections in an RPX/RPL from an SD card for Telkin
 
-    char filepath[256]; // buffer for full SD path
-    memset(filepath, 0, sizeof(filepath));
+  //  DEBUG_FUNCTION_LINE("RPX/RPL name for test: %s\n", request->name);
 
-    char mountpath[] = "/vol/storage_iosu_tmp_sd_rpl_hijack";
-    snprintf(filepath, sizeof(filepath), "%s/%s", mountpath, request->name);
+    u32 curTitleID_top = (curTitleID >> 32) & 0xFFFFFFFF;
+    u32 curTitleID_bot = curTitleID & 0xFFFFFFFF;
+  //  DEBUG_FUNCTION_LINE("Current Title ID: %08X%08X", curTitleID_top, curTitleID_bot);
 
+    char mountpath[] = "/vol/storage_iosu_sdrpl";
+    
     char modulename[256];
     memset(modulename, 0, sizeof(modulename));
 
@@ -228,19 +233,23 @@ int DoSDRedirectionByPath(ipcmessage *msg, MCPLoadFileRequest *request) {
     int fd = -1;
 
     FSA_Mount(fsa_h, "/dev/sdcard01", mountpath, 2, NULL, 0);
-    int ret = FSA_OpenFile(fsa_h, filepath, "r", &fd);
 
+    char rplPath[128];
+    memset(rplPath, 0, sizeof(rplPath));
+
+    snprintf(rplPath, sizeof(rplPath), "/vol/storage_iosu_sdrpl/telkin/%08X%08X/code/%s", curTitleID_top, curTitleID_bot, request->name);
+   // DEBUG_FUNCTION_LINE("Current RPL Path: %s\n", rplPath);
+
+    int ret = FSA_OpenFile(fsa_h, rplPath, "r", &fd);
     if (ret < 0) {
-      //  off for now due to spammy logs  
-      //  DEBUG_FUNCTION_LINE("Error: Couldn't find RPL on SD! Err code: %d", ret); 
+    //  DEBUG_FUNCTION_LINE("Error: Couldn't find RPL on SD! Err code: %d", ret); 
         FSA_CloseFile(fsa_h, fd);
         svcClose(fsa_h);
         // Keeping a copy of request->name here so that homebrew RPXs
         // won't crash on boot
         snprintf(modulename, sizeof(modulename), "%s", request->name);
-    }
-        else {
-            DEBUG_FUNCTION_LINE("Found RPL for hijack!");
+    } else {
+            DEBUG_FUNCTION_LINE("Found RPL for hijack");
             snprintf(modulename, sizeof(modulename), "~|%s", request->name);
             FSA_CloseFile(fsa_h, fd);
             svcClose(fsa_h);
@@ -509,6 +518,9 @@ int _MCP_ReadCOSXml_patch(uint32_t u1, uint32_t u2, MCPPPrepareTitleInfo *xmlDat
     int (*const real_MCP_ReadCOSXml_patch)(uint32_t u1, uint32_t u2, MCPPPrepareTitleInfo * xmlData) = (void *) 0x050024ec + 1; //+1 for thumb
 
     int res = real_MCP_ReadCOSXml_patch(u1, u2, xmlData);
+
+    // Hacky but I don't feel like dealing with MCP_GetTitleId
+    curTitleID = xmlData->titleId;
 
     /*
     For some reason ONE PIECE Unlimited World Red softlocks when it has full FSA permissions.
